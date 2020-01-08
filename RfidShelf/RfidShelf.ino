@@ -16,7 +16,11 @@
 #endif
 
 #ifdef BUTTONS_ENABLE
-#include "ShelfButtons.h"
+  #ifdef USE_MCP23017
+    #include "ShelfButtonsMCP.h"
+  #else
+    #include "ShelfButtons.h"
+  #endif
 #endif
 
 #ifdef PUSHOVER_ENABLE
@@ -37,7 +41,11 @@ ShelfPlayback playback(SD);
 ShelfRfid rfid(playback);
 ShelfWeb webInterface(playback, rfid, SD, timeClient);
 #ifdef BUTTONS_ENABLE
-ShelfButtons buttons(playback);
+  #ifdef USE_MCP23017
+    ShelfButtonsMCP buttons(playback);
+  #else
+    ShelfButtons buttons(playback);
+  #endif
 #endif
 #ifdef PUSHOVER_ENABLE
 ShelfPushover pushover;
