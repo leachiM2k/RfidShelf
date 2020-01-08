@@ -11,8 +11,17 @@
 
 #define AMP_POWER       D4
 
-#define PAUSE_BTN       D10   // GPIO1 = TX
-#define SKIP_BTN        D9    // GPIO3 = RX
+#ifdef USE_MCP23017
+    #define VOLUME_DOWN_BTN 0
+    #define VOLUME_UP_BTN   1
+    #define PAUSE_BTN       2
+    #define PREV_BTN        3
+    #define SKIP_BTN        4
+#else
+    #define PAUSE_BTN       D10   // GPIO1 = TX
+    #define SKIP_BTN        D9    // GPIO3 = RX
+#endif
+
 #define VOLUME          A0
 
 #endif // ShelfPins_h

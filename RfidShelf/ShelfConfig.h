@@ -55,6 +55,7 @@
 // Changing volume via cards or web interface will not work anymore!
 //#define BUTTONS_ENABLE
 
+#define USE_MCP23017
 
 // -------------------------
 // DEBUG OUTPUT
