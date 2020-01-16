@@ -2,7 +2,7 @@
 #define ShelfWeb_h
 
 #include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266httpUpdate.h>
@@ -20,27 +20,27 @@ class ShelfWeb {
     ShelfWeb(ShelfPlayback &playback, ShelfRfid &rfid, SdFat &sd, NTPClient &timeClient);
     void begin();
     void work();
-    static void defaultCallback();
-    static void fileUploadCallback();
+    static void defaultCallback(AsyncWebServerRequest *request);
+    static void fileUploadCallback(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
   private:
     static ShelfWeb *_instance;
     ShelfPlayback &_playback;
     ShelfRfid &_rfid;
     SdFat &_SD;
     NTPClient &_timeClient;
-    ESP8266WebServer _server;
+    AsyncWebServer _server;
     SdFile _uploadFile;
     uint32_t _uploadStart;
-    void _returnOK();
-    void _returnHttpStatus(uint16_t statusCode, const char *msg);
-    void _sendHTML();
-    void _sendJsonStatus();
-    void _sendJsonFS(const char *path);
-    bool _loadFromSdCard(const char *path);
+    void _returnOK(AsyncWebServerRequest *request);
+    void _returnHttpStatus(AsyncWebServerRequest *request, uint16_t statusCode, const char *msg);
+    void _sendHTML(AsyncWebServerRequest *request);
+    void _sendJsonStatus(AsyncWebServerRequest *request);
+    void _sendJsonFS(AsyncWebServerRequest *request, const char *path);
+    bool _loadFromSdCard(AsyncWebServerRequest *request, const char *path);
     void _handleWriteRfid(const char *folder);
-    void _handleFileUpload();
-    void _handleDefault();
-    void _downloadPatch();
+    void _handleFileUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
+    void _handleDefault(AsyncWebServerRequest *request);
+    void _downloadPatch(AsyncWebServerRequest *request);
     void _updateOTA();
 };
 

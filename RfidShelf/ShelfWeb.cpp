@@ -3,16 +3,16 @@
 // This sucks - Maybe refactor ShelfWeb to singleton
 ShelfWeb *ShelfWeb::_instance;
 
-ShelfWeb::ShelfWeb(ShelfPlayback &playback, ShelfRfid &rfid, SdFat &sd, NTPClient &timeClient) : _playback(playback), _rfid(rfid), _SD(sd), _timeClient(timeClient) {
+ShelfWeb::ShelfWeb(ShelfPlayback &playback, ShelfRfid &rfid, SdFat &sd, NTPClient &timeClient) : _playback(playback), _rfid(rfid), _SD(sd), _timeClient(timeClient), _server(80) {
   _instance = this;
 }
 
-void ShelfWeb::defaultCallback() {
-  _instance->_handleDefault();
+void ShelfWeb::defaultCallback(AsyncWebServerRequest *request) {
+  _instance->_handleDefault(request);
 }
 
-void ShelfWeb::fileUploadCallback() {
-  _instance->_handleFileUpload();
+void ShelfWeb::fileUploadCallback(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+  _instance->_handleFileUpload(request, filename, index, data, len, final);
 }
 
 void ShelfWeb::begin() {
@@ -24,21 +24,21 @@ void ShelfWeb::begin() {
   MDNS.addService("http", "tcp", 80);
 }
 
-void ShelfWeb::_returnOK() {
-  _server.send_P(200, "text/plain", NULL);
+void ShelfWeb::_returnOK(AsyncWebServerRequest *request) {
+  request->send_P(200, "text/plain", NULL);
 }
 
-void ShelfWeb::_returnHttpStatus(uint16_t statusCode, const char *msg) {
-  _server.send_P(statusCode, "text/plain", msg);
+void ShelfWeb::_returnHttpStatus(AsyncWebServerRequest *request, uint16_t statusCode, const char *msg) {
+  request->send_P(statusCode, "text/plain", msg);
 }
 
-void ShelfWeb::_sendHTML() {
-  _server.sendHeader("Content-Encoding", "gzip");
-  _server.send_P(200, "text/html", ShelfHtml::INDEX, ShelfHtml::INDEX_SIZE);
+void ShelfWeb::_sendHTML(AsyncWebServerRequest *request) {
+  AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", ShelfHtml::INDEX, ShelfHtml::INDEX_SIZE);
+  response->addHeader("Content-Encoding", "gzip");
+  request->send(response);
 }
 
-
-void ShelfWeb::_sendJsonStatus() {
+void ShelfWeb::_sendJsonStatus(AsyncWebServerRequest *request) {
   char output[512] = "{\"playback\":\"";
   char buffer[101];
 
@@ -111,12 +111,13 @@ void ShelfWeb::_sendJsonStatus() {
   strcat(output, buffer);
   strcat(output, "}");
 
-  _server.send_P(200, "application/json", output);
+  request->send_P(200, "application/json", output);
 }
 
-void ShelfWeb::_sendJsonFS(const char *path) {
-  _server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  _server.send_P(200, "application/json", "{\"fs\":[");
+void ShelfWeb::_sendJsonFS(AsyncWebServerRequest *request, const char *path) {
+  AsyncResponseStream *response = request->beginResponseStream("application/json");
+  response->print(F("{\"fs\":["));
+  request->send_P(200, "application/json", "{\"fs\":[");
 
   SdFile dir;
   dir.open(path, O_READ);
@@ -125,61 +126,62 @@ void ShelfWeb::_sendJsonFS(const char *path) {
   SdFile entry;
 
   char buffer[101];
-  char output[256];
 
   bool first = true;
 
   while (entry.openNext(&dir, O_READ)) {
     if(first) {
       first = false;
-      strcpy(output, "{\"name\":\"");
+      response->print(F("{\"name\":\""));
     } else {
-      strcpy(output, ",{\"name\":\"");
+      response->print(F(", {\"name\":\""));
     }
     entry.getName(buffer, sizeof(buffer));
     // TODO encode special characters
-    strcat(output, buffer);
+    response->print(buffer);
     if (entry.isDir()) {
-      strcat(output, "\"");
+      response->print(F("\""));
     } else {
-      strcat(output, "\",\"size\":");
+      response->print(F("\",\"size\":"));
       snprintf(buffer, sizeof(buffer), "%lu", (unsigned long) entry.fileSize());
-      strcat(output, buffer);
+      response->print(buffer);
     }
     entry.close();
-    strcat(output, "}");
-    _server.sendContent_P(output);
+    response->print(F("}"));
   }
-  _server.sendContent_P("],");
-  snprintf(output, sizeof(output), "\"path\":\"%s\"", path);
-  _server.sendContent_P(output);
-  _server.sendContent_P("}");
-  _server.sendContent_P("");
+  response->print(F("],"));
+  response->printf("\"path\":\"%s\"", path);
+  response->print(F("}"));
+  response->print(F(""));
+  request->send(response);
 
   dir.close();
 }
 
-bool ShelfWeb::_loadFromSdCard(const char *path) {
+bool ShelfWeb::_loadFromSdCard(AsyncWebServerRequest *request, const char *path) {
   File dataFile = _SD.open(path);
 
   if (!dataFile) {
     Sprintln(F("File not open"));
-    _returnHttpStatus(404, "Not found");
+    _returnHttpStatus(request, 404, "Not found");
     return false;
   }
 
   if (dataFile.isDir()) {
-    _sendJsonFS(path);
+    _sendJsonFS(request, path);
   } else {
-    if (_server.streamFile(dataFile, "application/octet-stream") != dataFile.size()) {
+    request->send(dataFile, "application/octet-stream");
+    /*
+    if (request->send(dataFile, "application/octet-stream") != dataFile.size()) {
       Sprintln(F("Sent less data than expected!"));
     }
+    */
   }
   dataFile.close();
   return true;
 }
 
-void ShelfWeb::_downloadPatch() {
+void ShelfWeb::_downloadPatch(AsyncWebServerRequest *request) {
   Sprintln(F("Starting patch download"));
   std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
   // do not validate certificate
@@ -188,13 +190,13 @@ void ShelfWeb::_downloadPatch() {
   httpClient.begin(*client, VS1053_PATCH_URL);
   int httpCode = httpClient.GET();
   if (httpCode < 0) {
-    _returnHttpStatus(500, httpClient.errorToString(httpCode).c_str());
+    _returnHttpStatus(request, 500, httpClient.errorToString(httpCode).c_str());
     return;
   }
   if (httpCode != HTTP_CODE_OK) {
     char buffer[32];
     snprintf(buffer, sizeof(buffer), "invalid response code: %d", httpCode);
-    _returnHttpStatus(500, buffer);
+    _returnHttpStatus(request, 500, buffer);
     return;
   }
   int len = httpClient.getSize();
@@ -222,23 +224,18 @@ void ShelfWeb::_downloadPatch() {
   if (patchFile.isOpen()) {
     patchFile.close();
   }
-  _returnOK();
-  _server.client().flush();
+  _returnOK(request);
   ESP.restart();
 }
 
-void ShelfWeb::_handleFileUpload() {
+void ShelfWeb::_handleFileUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
   // Upload always happens on /
-  if (_server.uri() != "/") {
+  if (request->url() != "/") {
     Sprintln(F("Invalid upload URI"));
     return;
   }
 
-  HTTPUpload& upload = _server.upload();
-
-  if (upload.status == UPLOAD_FILE_START) {
-    String filename = upload.filename;
-
+  if(!index){
     if (!Adafruit_VS1053_FilePlayer::isMP3File((char *)filename.c_str())) {
       Sprint(F("Not a MP3: ")); Sprintln(filename);
       return;
@@ -258,38 +255,38 @@ void ShelfWeb::_handleFileUpload() {
     _uploadStart = millis();
     Sprint(F("Upload start: "));
     Sprintln(filename);
-  } else if (upload.status == UPLOAD_FILE_WRITE) {
-    if (_uploadFile.isOpen()) {
-      _uploadFile.write(upload.buf, upload.currentSize);
-      //Sprint(F("Upload write: "));
-      //Sprintln(upload.currentSize);
-    }
-  } else if (upload.status == UPLOAD_FILE_END) {
+  } else if (final) {
     if (_uploadFile.isOpen()) {
       _uploadFile.close();
-      Sprint(F("Upload end: ")); Sprintln(upload.totalSize);
+      Sprint(F("Upload end: ")); Sprintln(index + len);
       Sprint(F("Took: ")); Sprintln(((millis()-_uploadStart)/1000));
+    }
+  } else {
+    if (_uploadFile.isOpen()) {
+      _uploadFile.write(data, len);
+      //Sprint(F("Upload write: "));
+      //Sprintln(upload.currentSize);
     }
   }
 }
 
-void ShelfWeb::_handleDefault() {
-  String path = _server.urlDecode(_server.uri());
+void ShelfWeb::_handleDefault(AsyncWebServerRequest *request) {
+  String path = request->urlDecode(request->url());
   Sprintf(F("Request to: %s\n"), path.c_str());
-  if (_server.method() == HTTP_GET) {
-    if (_server.hasArg("status")) {
-      _sendJsonStatus();
+  if (request->method() == HTTP_GET) {
+    if (request->hasArg("status")) {
+      _sendJsonStatus(request);
       return;
-    } else if(path == "/" && !_server.hasArg("fs")) {
-      _sendHTML();
+    } else if(path == "/" && !request->hasArg("fs")) {
+      _sendHTML(request);
       return;
     } else {
-      _loadFromSdCard(path.c_str());
+      _loadFromSdCard(request, path.c_str());
       return;
     }
-  } else if (_server.method() == HTTP_DELETE) {
+  } else if (request->method() == HTTP_DELETE) {
     if (path == "/" || !_SD.exists(path.c_str())) {
-      _returnHttpStatus(400, "Bad path");
+      _returnHttpStatus(request, 400, "Bad path");
       return;
     }
 
@@ -305,25 +302,25 @@ void ShelfWeb::_handleDefault() {
       }
     }
     file.close();
-    _returnOK();
+    _returnOK(request);
     return;
-  } else if (_server.method() == HTTP_POST) {
-    if (_server.hasArg("newFolder")) {
-      Sprint(F("Creating folder ")); Sprintln(_server.arg("newFolder"));
-      _SD.mkdir(_server.arg("newFolder").c_str());
-      _returnOK();
+  } else if (request->method() == HTTP_POST) {
+    if (request->hasArg("newFolder")) {
+      Sprint(F("Creating folder ")); Sprintln(request->arg("newFolder"));
+      _SD.mkdir(request->arg("newFolder").c_str());
+      _returnOK(request);
       return;
-    } else if (_server.hasArg("ota")) {
-      Sprint(F("Starting OTA from ")); Sprintln(_server.arg("ota"));
+    } else if (request->hasArg("ota")) {
+      Sprint(F("Starting OTA from ")); Sprintln(request->arg("ota"));
       std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
       // do not validate certificate
       client->setInsecure();
-      t_httpUpdate_return ret = ESPhttpUpdate.update(*client, _server.arg("ota"));
+      t_httpUpdate_return ret = ESPhttpUpdate.update(*client, request->arg("ota"));
       switch (ret) {
         case HTTP_UPDATE_FAILED:
           Sprintf("HTTP_UPDATE_FAILD Error (%d): ", ESPhttpUpdate.getLastError());
           Sprintln(ESPhttpUpdate.getLastErrorString().c_str());
-          _returnHttpStatus(500, "Update failed, please try again");
+          _returnHttpStatus(request, 500, "Update failed, please try again");
           return;
         case HTTP_UPDATE_NO_UPDATES:
           Sprintln(F("HTTP_UPDATE_NO_UPDATES"));
@@ -332,46 +329,46 @@ void ShelfWeb::_handleDefault() {
           Sprintln(F("HTTP_UPDATE_OK"));
           break;
       }
-      _returnOK();
+      _returnOK(request);
       return;
-    } else if (_server.hasArg("downloadpatch")) {
-      _downloadPatch();
+    } else if (request->hasArg("downloadpatch")) {
+      _downloadPatch(request);
       return;
-    } else if (_server.hasArg("stop")) {
+    } else if (request->hasArg("stop")) {
       _playback.stopPlayback();
-      _sendJsonStatus();
+      _sendJsonStatus(request);
       return;
-    } else if (_server.hasArg("pause")) {
+    } else if (request->hasArg("pause")) {
       _playback.pausePlayback();
-      _sendJsonStatus();
+      _sendJsonStatus(request);
       return;
-    } else if (_server.hasArg("resume")) {
+    } else if (request->hasArg("resume")) {
       _playback.playingByCard = false;
       _playback.resumePlayback();
-      _sendJsonStatus();
+      _sendJsonStatus(request);
       return;
-    } else if (_server.hasArg("skip")) {
+    } else if (request->hasArg("skip")) {
       _playback.playingByCard = false;
       _playback.skipFile();
-      _sendJsonStatus();
+      _sendJsonStatus(request);
       return;
-    } else if (_server.hasArg("volumeUp")) {
+    } else if (request->hasArg("volumeUp")) {
       _playback.volumeUp();
-      _sendJsonStatus();
+      _sendJsonStatus(request);
       return;
-    } else if (_server.hasArg("volumeDown")) {
+    } else if (request->hasArg("volumeDown")) {
       _playback.volumeDown();
-      _sendJsonStatus();
+      _sendJsonStatus(request);
       return;
-    } else if (_server.hasArg("toggleNight")) {
+    } else if (request->hasArg("toggleNight")) {
       if(_playback.isNight()) {
         _playback.stopNight();
       } else {
         _playback.startNight();
       }
-      _sendJsonStatus();
+      _sendJsonStatus(request);
       return;
-    } else if (_server.hasArg("toggleShuffle")) {
+    } else if (request->hasArg("toggleShuffle")) {
       if(_playback.defaultShuffleMode) {
         _playback.defaultShuffleMode = false;
         _playback.stopShuffle();
@@ -379,41 +376,41 @@ void ShelfWeb::_handleDefault() {
         _playback.defaultShuffleMode = true;
         _playback.startShuffle();
       }
-      _sendJsonStatus();
+      _sendJsonStatus(request);
       return;
-    } else if (_server.uri() == "/") {
+    } else if (request->url() == "/") {
       Sprintln(F("Probably got an upload request"));
-      _returnOK();
+      _returnOK(request);
       return;
     } else if (_SD.exists(path.c_str())) {
       // <= 17 here because leading "/"" is included
-      if (_server.hasArg("write") && path.length() <= 17) {
+      if (request->hasArg("write") && path.length() <= 17) {
         const char *target = path.c_str();
-        const uint8_t volume = (uint8_t)_server.arg("volume").toInt();
+        const uint8_t volume = (uint8_t)request->arg("volume").toInt();
         uint8_t repeat = 0;       // keep configured setting
         uint8_t shuffle = 0;      // keep configured setting
         uint8_t stopOnRemove = 0; // keep configured setting
-        if(_server.arg("repeat").equals("1") || _server.arg("repeat").equals("0")) {
-          repeat = 2 + _server.arg("repeat").toInt();
+        if(request->arg("repeat").equals("1") || request->arg("repeat").equals("0")) {
+          repeat = 2 + request->arg("repeat").toInt();
         }
-        if(_server.arg("shuffle").equals("1") || _server.arg("shuffle").equals("0")) {
-          repeat = 2 + _server.arg("shuffle").toInt();
+        if(request->arg("shuffle").equals("1") || request->arg("shuffle").equals("0")) {
+          repeat = 2 + request->arg("shuffle").toInt();
         }
-        if(_server.arg("stopOnRemove").equals("1") || _server.arg("stopOnRemove").equals("0")) {
-          repeat = 2 + _server.arg("stopOnRemove").toInt();
+        if(request->arg("stopOnRemove").equals("1") || request->arg("stopOnRemove").equals("0")) {
+          repeat = 2 + request->arg("stopOnRemove").toInt();
         }
         // Remove leading "/""
         target++;
         if (_rfid.startPairing(target, volume, repeat, shuffle, stopOnRemove)) {
-          _sendJsonStatus();
+          _sendJsonStatus(request);
           return;
         }
-      } else if (_server.hasArg("play") && _playback.switchFolder(path.c_str())) {
+      } else if (request->hasArg("play") && _playback.switchFolder(path.c_str())) {
         _playback.startPlayback();
         _playback.playingByCard = false;
-        _sendJsonStatus();
+        _sendJsonStatus(request);
         return;
-      } else if (_server.hasArg("playfile")) {
+      } else if (request->hasArg("playfile")) {
         char* pathCStr = (char *)path.c_str();
         char* folderRaw = strtok(pathCStr, "/");
         char* file = strtok(NULL, "/");
@@ -427,7 +424,7 @@ void ShelfWeb::_handleDefault() {
           if(_playback.switchFolder(folder)) {
             _playback.startFilePlayback(folderRaw, file);
             _playback.playingByCard = false;
-            _sendJsonStatus();
+            _sendJsonStatus(request);
             return;
           }
         }
@@ -436,10 +433,9 @@ void ShelfWeb::_handleDefault() {
   }
 
   // 404 otherwise
-  _returnHttpStatus(404, "Not found");
+  _returnHttpStatus(request, 404, F("Not found"));
   Sprintln("404: " + path);
 }
 
 void ShelfWeb::work() {
-  _server.handleClient();
 }

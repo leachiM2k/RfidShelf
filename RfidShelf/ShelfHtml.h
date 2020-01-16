@@ -5,7 +5,7 @@
 
 class ShelfHtml {
     public:
-        static const char INDEX[];
+        static const uint8_t INDEX[];
         static const size_t INDEX_SIZE;
 };
 #endif // ShelfHtml_h

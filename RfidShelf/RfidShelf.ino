@@ -2,7 +2,10 @@
 #include "ShelfPins.h"
 #include "ShelfConfig.h"
 #include <ESP8266WiFi.h>
-#include <WiFiManager.h>
+
+#include <ESPAsyncWebServer.h>
+#include <ESPAsyncWiFiManager.h>
+
 #include <SdFat.h>
 #include <WiFiUdp.h>
 #include <ESP8266mDNS.h>
@@ -22,9 +25,6 @@
 #ifdef PUSHOVER_ENABLE
 #include "ShelfPushover.h"
 #endif
-
-
-WiFiManager wifiManager;
 
 SdFat SD;
 
@@ -79,6 +79,10 @@ void setup() {
   sprintf(hostString, "SHELF_%06X", ESP.getChipId());
   Sprint("Hostname: "); Sprintln(hostString);
   WiFi.hostname(hostString);
+
+  AsyncWebServer server(80);
+  DNSServer dns;
+  AsyncWiFiManager wifiManager(&server,&dns);
 
   wifiManager.setConfigPortalTimeout(3 * 60);
   if (!wifiManager.autoConnect("MP3-SHELF-SETUP", "lacklack")) {
