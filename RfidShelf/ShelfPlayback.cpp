@@ -69,19 +69,16 @@ const bool ShelfPlayback::switchFolder(const char *folder) {
   }
   stopPlayback();
   _currentFolder.close();
-  _currentFolder.open(folder);
-  _currentFolder.rewind();
+  _currentFolder = _SD.open(folder, FILE_READ);
+  _currentFolder.rewindDirectory();
   _currentFile[0] = '\0';
   _currentFolderFileCount = 0;
 
-  SdFile file;
-  char filenameChar[100];
+  File file;
 
-  while (file.openNext(&_currentFolder, O_READ))
+  while (file = _currentFolder.openNextFile())
   {
-    file.getName(filenameChar, sizeof(filenameChar));
-
-    if (!file.isDir() && _musicPlayer.isMP3File(filenameChar)) {
+    if (!file.isDirectory() && _musicPlayer.isMP3File(file.name())) {
       _currentFolderFileCount++;
     }
     file.close();
@@ -91,7 +88,7 @@ const bool ShelfPlayback::switchFolder(const char *folder) {
 }
 
 void ShelfPlayback::currentFolder(char *foldername, size_t size) {
-  _currentFolder.getName(foldername, size);
+  foldername = strdup(_currentFolder.name());
 }
 
 void ShelfPlayback::currentFile(char *filename, size_t size) {
@@ -155,11 +152,10 @@ void ShelfPlayback::stopPlayback() {
 void ShelfPlayback::startPlayback() {
   // IO takes time, reset watchdog timer so it does not kill us
   ESP.wdtFeed();
-  SdFile file;
-  _currentFolder.rewind();
+  File file;
+  _currentFolder.rewindDirectory();
 
   char nextFile[100] = "";
-  char filenameChar[100];
 
   // Find next file in shuffle playback
   if(_shuffleMode && (_currentFolderFileCount-_shufflePlaybackCount > 0)) {
@@ -168,10 +164,10 @@ void ShelfPlayback::startPlayback() {
 
     uint16_t hits = 0;
     uint16_t nextFileIndex = 0;
-    while (file.openNext(&_currentFolder, O_READ)) {
-      file.getName(filenameChar, sizeof(filenameChar));
-
-      if (file.isDir() || !_musicPlayer.isMP3File(filenameChar)) {
+    
+    while (file = _currentFolder.openNextFile()) {
+      const char *filenameChar = file.name();
+      if (file.isDirectory() || !_musicPlayer.isMP3File(filenameChar)) {
         Sprint(F("Ignoring ")); Sprintln(filenameChar);
         file.close();
         continue;
@@ -194,11 +190,11 @@ void ShelfPlayback::startPlayback() {
 
   // Find next file for alphabetical playback
   if(!_shuffleMode) {
-    while (file.openNext(&_currentFolder, O_READ))
+    while (file = _currentFolder.openNextFile())
     {
-      file.getName(filenameChar, sizeof(filenameChar));
+      const char *filenameChar = file.name();
 
-      if (file.isDir() || !_musicPlayer.isMP3File(filenameChar)) {
+      if (file.isDirectory() || !_musicPlayer.isMP3File(filenameChar)) {
         Sprint(F("Ignoring ")); Sprintln(filenameChar);
         file.close();
         continue;
@@ -233,8 +229,7 @@ void ShelfPlayback::startPlayback() {
     }
   }
 
-  char folder[100];
-  _currentFolder.getName(folder, sizeof(folder));
+  const char *folder = _currentFolder.name();
 
   startFilePlayback(folder, nextFile);
 }
@@ -299,17 +294,17 @@ void ShelfPlayback::setBassAndTreble(uint8_t trebleAmplitude, uint8_t trebleFreq
   bassReg |= bassAmplitude;
   bassReg <<= 4;
   bassReg |= bassFreqLimit;
-  Sprintf(F("bass value: %04x\n"), bassReg);
+  Sprintf("bass value: %04x\n", bassReg);
   _musicPlayer.sciWrite(VS1053_REG_BASS, bassReg);
 }
 
 const bool ShelfPlayback::_patchVS1053() {
   Sprintln(F("Installing patch to VS1053"));
 
-  SdFile file;
-  if (!file.open("patches.053", O_READ)) return false;
+  File file;
+  if (!(file = _SD.open("patches.053", FILE_READ))) return false;
 
-  uint16_t addr, n, val, i = 0;
+  uint8_t addr, n, val, i = 0;
 
   while (file.read(&addr, 2) && file.read(&n, 2)) {
     i += 2;

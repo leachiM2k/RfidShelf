@@ -3,7 +3,7 @@
 // This sucks - Maybe refactor ShelfWeb to singleton
 ShelfWeb *ShelfWeb::_instance;
 
-ShelfWeb::ShelfWeb(ShelfPlayback &playback, ShelfRfid &rfid, SdFat &sd, NTPClient &timeClient) : _playback(playback), _rfid(rfid), _SD(sd), _timeClient(timeClient), _server(80) {
+ShelfWeb::ShelfWeb(ShelfPlayback &playback, ShelfRfid &rfid, SDClass &sd, NTPClient &timeClient) : _playback(playback), _rfid(rfid), _SD(sd), _timeClient(timeClient), _server(80) {
   _instance = this;
 }
 
@@ -119,32 +119,29 @@ void ShelfWeb::_sendJsonFS(AsyncWebServerRequest *request, const char *path) {
   response->print(F("{\"fs\":["));
   request->send_P(200, "application/json", "{\"fs\":[");
 
-  SdFile dir;
-  dir.open(path, O_READ);
-  dir.rewind();
+  File dir = _SD.open(path, FILE_READ);
+  dir.rewindDirectory();
 
-  SdFile entry;
-
-  char buffer[101];
+  File entry;
 
   bool first = true;
 
-  while (entry.openNext(&dir, O_READ)) {
+  while (entry = dir.openNextFile()) {
     if(first) {
       first = false;
       response->print(F("{\"name\":\""));
     } else {
       response->print(F(", {\"name\":\""));
     }
-    entry.getName(buffer, sizeof(buffer));
+    const char *buffer;
+    buffer = entry.name();
     // TODO encode special characters
     response->print(buffer);
-    if (entry.isDir()) {
+    if (entry.isDirectory()) {
       response->print(F("\""));
     } else {
       response->print(F("\",\"size\":"));
-      snprintf(buffer, sizeof(buffer), "%lu", (unsigned long) entry.fileSize());
-      response->print(buffer);
+      response->printf("%lu", (unsigned long) entry.size());
     }
     entry.close();
     response->print(F("}"));
@@ -167,7 +164,7 @@ bool ShelfWeb::_loadFromSdCard(AsyncWebServerRequest *request, const char *path)
     return false;
   }
 
-  if (dataFile.isDir()) {
+  if (dataFile.isDirectory()) {
     _sendJsonFS(request, path);
   } else {
     request->send(dataFile, "application/octet-stream");
@@ -202,8 +199,7 @@ void ShelfWeb::_downloadPatch(AsyncWebServerRequest *request) {
   int len = httpClient.getSize();
   WiFiClient* stream = httpClient.getStreamPtr();
   uint8_t buffer[128] = { 0 };
-  SdFile patchFile;
-  patchFile.open("/patches.053", O_WRITE | O_CREAT);
+  File patchFile = _SD.open("/patches.053", FILE_WRITE);
   while (httpClient.connected() && (len > 0 || len == -1)) {
     // get available data size
     size_t size = stream->available();
@@ -211,7 +207,7 @@ void ShelfWeb::_downloadPatch(AsyncWebServerRequest *request) {
       // read til buffer is full
       int c = stream->readBytes(buffer, ((size > sizeof(buffer)) ? sizeof(buffer) : size));
       // write the buffer to our patch file
-      if (patchFile.isOpen()) {
+      if(patchFile) {
         patchFile.write(buffer, c);
       }
       // reduce len until we the end (= zero) if len not -1
@@ -221,7 +217,7 @@ void ShelfWeb::_downloadPatch(AsyncWebServerRequest *request) {
     }
     delay(1);
   }
-  if (patchFile.isOpen()) {
+  if (patchFile) {
     patchFile.close();
   }
   _returnOK(request);
@@ -251,18 +247,18 @@ void ShelfWeb::_handleFileUpload(AsyncWebServerRequest *request, String filename
       return;
     }
 
-    _uploadFile.open(filename.c_str(), O_WRITE | O_CREAT);
+    _uploadFile = _SD.open(filename.c_str(), FILE_WRITE);
     _uploadStart = millis();
     Sprint(F("Upload start: "));
     Sprintln(filename);
   } else if (final) {
-    if (_uploadFile.isOpen()) {
+    if (_uploadFile) {
       _uploadFile.close();
       Sprint(F("Upload end: ")); Sprintln(index + len);
       Sprint(F("Took: ")); Sprintln(((millis()-_uploadStart)/1000));
     }
   } else {
-    if (_uploadFile.isOpen()) {
+    if (_uploadFile) {
       _uploadFile.write(data, len);
       //Sprint(F("Upload write: "));
       //Sprintln(upload.currentSize);
@@ -272,7 +268,7 @@ void ShelfWeb::_handleFileUpload(AsyncWebServerRequest *request, String filename
 
 void ShelfWeb::_handleDefault(AsyncWebServerRequest *request) {
   String path = request->urlDecode(request->url());
-  Sprintf(F("Request to: %s\n"), path.c_str());
+  Sprintf("Request to: %s\n", path.c_str());
   if (request->method() == HTTP_GET) {
     if (request->hasArg("status")) {
       _sendJsonStatus(request);
@@ -290,10 +286,9 @@ void ShelfWeb::_handleDefault(AsyncWebServerRequest *request) {
       return;
     }
 
-    SdFile file;
-    file.open(path.c_str());
-    if (file.isDir()) {
-      if(!file.rmRfStar()) {
+    File file = _SD.open(path.c_str());
+    if (file.isDirectory()) {
+      if(!_SD.rmdir(path.c_str())) {
         Sprintln(F("Could not delete folder"));
       }
     } else {
@@ -433,7 +428,7 @@ void ShelfWeb::_handleDefault(AsyncWebServerRequest *request) {
   }
 
   // 404 otherwise
-  _returnHttpStatus(request, 404, F("Not found"));
+  _returnHttpStatus(request, 404, "Not found");
   Sprintln("404: " + path);
 }
 

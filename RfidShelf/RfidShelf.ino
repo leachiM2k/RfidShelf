@@ -6,7 +6,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ESPAsyncWiFiManager.h>
 
-#include <SdFat.h>
+#include <SD.h>
 #include <WiFiUdp.h>
 #include <ESP8266mDNS.h>
 #include <NTPClient.h>
@@ -26,16 +26,16 @@
 #include "ShelfPushover.h"
 #endif
 
-SdFat SD;
-
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, NTP_SERVER, NTP_OFFSET, NTP_UPDATE_TIME);
 
 char hostString[16] = {0};
 
-ShelfPlayback playback(SD);
+SDClass _SD;
+
+ShelfPlayback playback(_SD);
 ShelfRfid rfid(playback);
-ShelfWeb webInterface(playback, rfid, SD, timeClient);
+ShelfWeb webInterface(playback, rfid, _SD, timeClient);
 #ifdef BUTTONS_ENABLE
 ShelfButtons buttons(playback);
 #endif
@@ -68,9 +68,11 @@ void setup() {
   rfid.begin();
     
   //Initialize the SdCard.
-  if (!SD.begin(SD_CS) || !SD.chdir("/")) {
+  if (!SD.begin(SD_CS) || !SD.exists("/")) {
     Sprintln(F("Could not initialize SD card"));
-    SD.initErrorHalt();
+    while (1) {
+      yield();
+    }
   }
   Sprintln(F("SD ready"));
 

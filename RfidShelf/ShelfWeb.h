@@ -7,7 +7,7 @@
 #include <ESP8266mDNS.h>
 #include <ESP8266httpUpdate.h>
 #include <Adafruit_VS1053.h>
-#include <SdFat.h>
+#include <SD.h>
 #include <NTPClient.h>
 #include "ShelfConfig.h"
 #include "ShelfPlayback.h"
@@ -17,7 +17,7 @@
 
 class ShelfWeb {
   public:
-    ShelfWeb(ShelfPlayback &playback, ShelfRfid &rfid, SdFat &sd, NTPClient &timeClient);
+    ShelfWeb(ShelfPlayback &playback, ShelfRfid &rfid, SDClass &sd, NTPClient &timeClient);
     void begin();
     void work();
     static void defaultCallback(AsyncWebServerRequest *request);
@@ -26,10 +26,10 @@ class ShelfWeb {
     static ShelfWeb *_instance;
     ShelfPlayback &_playback;
     ShelfRfid &_rfid;
-    SdFat &_SD;
+    SDClass _SD;
     NTPClient &_timeClient;
     AsyncWebServer _server;
-    SdFile _uploadFile;
+    File _uploadFile;
     uint32_t _uploadStart;
     void _returnOK(AsyncWebServerRequest *request);
     void _returnHttpStatus(AsyncWebServerRequest *request, uint16_t statusCode, const char *msg);
